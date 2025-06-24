@@ -3,68 +3,42 @@ import pandas as pd
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
-from llama_cpp import Llama
-from huggingface_hub import hf_hub_download
+from transformers import pipeline
 
 # ====== SETUP ======
 @st.cache_resource
 def load_sentence_model():
-    return SentenceTransformer("paraphrase-MiniLM-L6-v2")
+    return SentenceTransformer("paraphrase-MiniLM-L3-v2")  # Lighter than L6-v2
 
 @st.cache_resource
 def load_llm_model():
-    # Download the Sahabatai model
-    model_path = hf_hub_download(
-        repo_id="gmonsoon/gemma2-9b-cpt-sahabatai-v1-instruct-GGUF",
-        filename="gemma2-9b-cpt-sahabatai-v1-instruct-Q4_K_M.gguf"
-    )
-    # Load the model with llama-cpp-python
-    llm = Llama(
-        model_path=model_path,
-        n_ctx=2048,  # Context length
-        n_threads=8,  # Adjust based on your CPU
-        n_gpu_layers=0  # Set to >0 if using GPU
-    )
-    return llm
+    # Load a lightweight DistilBERT model for question answering
+    return pipeline("question-answering", model="distilbert-base-uncased-distilled-squad")
 
 sentence_model = load_sentence_model()
-llm_model = load_llm_model()
+qa_model = load_llm_model()
 
 def build_faiss_index(texts):
-    embeddings = sentence_model.encode(texts)
+    embeddings = sentence_model.encode(texts, show_progress_bar=False)
     dim = embeddings.shape[1]
     index = faiss.IndexFlatL2(dim)
     index.add(np.array(embeddings).astype("float32"))
     return index, embeddings
 
-def retrieve(query, index, df, top_k=5):
+def retrieve(query, index, df, top_k=3):  # Reduced top_k for faster processing
     query_embedding = sentence_model.encode([query])[0]
     distances, indices = index.search(np.array([query_embedding]).astype("float32"), top_k)
     return df.iloc[indices[0]]
 
 def generate_answer(query, context):
-    system_message = "Kamu adalah asisten cerdas yang menjawab pertanyaan berdasarkan data yang diberikan."
-    user_message = f"""
-    Pertanyaan: {query}
-
-    Data yang relevan:
-    {context}
-
-    Jawab dalam bahasa Indonesia dengan jelas dan ringkas.
-    """
-    prompt = f"{system_message}\n\n{user_message}"
-    
-    # Generate response using the Sahabatai model
-    response = llm_model(
-        prompt=prompt,
-        max_tokens=1000,
-        temperature=0.7,
-        stop=["</s>", "<|eot|>"]  # Adjust based on model's stop tokens
-    )
-    return response["choices"][0]["text"].strip()
+    # Combine retrieved texts into a single context string
+    context = "\n".join(context.tolist())
+    # Use DistilBERT for question answering
+    result = qa_model(question=query, context=context)
+    return result["answer"]
 
 # ====== STREAMLIT UI ======
-st.title("📊 RAG CSV Umum (Tanpa Struktur Khusus)")
+st.title("📊 RAG CSV Umum (Ringan)")
 
 # ====== SIDEBAR ======
 st.sidebar.header("🔧 Pengaturan")
@@ -96,13 +70,13 @@ if uploaded_file:
 
     # Tampilkan preview data dari kolom terpilih
     st.write("📄 Pratinjau Data Terpilih")
-    st.dataframe(df[selected_columns出行
+    st.dataframe(df[selected_columns])
 
     def transform_data(df, selected_columns):
         df["text"] = df[selected_columns].astype(str).agg(" | ".join, axis=1)
         return df
 
-    # Input pertanyaan hanya muncul jika kolom telah dipilih
+    # Input pertanyaan
     query = st.text_input("❓ Masukkan pertanyaan Anda")
     run_query = st.button("🚀 Jawab Pertanyaan")
 
@@ -113,7 +87,7 @@ if uploaded_file:
 
             with st.spinner("🔍 Mencari data relevan..."):
                 results = retrieve(query, index, df)
-                context = "\n".join(results["text"].tolist())
+                context = results["text"]
 
             with st.spinner("🧠 Menghasilkan jawaban..."):
                 answer = generate_answer(query, context)

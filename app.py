@@ -10,16 +10,17 @@ from langchain.chains import RetrievalQA
 
 # Setup page
 st.set_page_config(page_title="CSV Q&A Chatbot", layout="centered")
-st.title("📊 CSV Q&A Chatbot (Fast & Light via flan-t5-base)")
+st.title("📊 CSV Q&A Chatbot")
+st.text("by Nadhiar Ridho Wahyu Pradana ~ DSS June 2025")
 
 # Step 1: API token input (secure)
-api_token = st.text_input("🔐 Enter your Hugging Face API token:", type="password")
+api_token = st.text_input("🔐 Masukkan Hugging Face API token:", type="password")
 if not api_token:
-    st.info("Please enter your Hugging Face API token to continue.")
+    st.info("Silakan masukkan Hugging Face API Anda untuk melanjutkan.")
     st.stop()
 
 # Step 2: Upload CSV
-uploaded_file = st.file_uploader("📁 Upload your CSV file", type=["csv"])
+uploaded_file = st.file_uploader("📁 Unggah file CSV", type=["csv"])
 if not uploaded_file:
     st.stop()
 
@@ -62,10 +63,10 @@ qa_chain = RetrievalQA.from_chain_type(
 
 # Step 9: Q&A interface
 st.markdown("---")
-st.subheader("💬 Ask a question about your CSV")
+st.subheader("💬 Tanyakan tentang file CSV Kamu disini")
 
-question = st.text_input("Type your question:")
+question = st.text_input("Tuliskan pertanyaan disini:")
 if question:
-    with st.spinner("🤖 Generating answer..."):
+    with st.spinner("🤖 Beri waktu aku berpikir sebentar..."):
         answer = qa_chain.run(question)
         st.success(answer)

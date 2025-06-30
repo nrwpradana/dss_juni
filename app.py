@@ -10,7 +10,7 @@ from langchain.memory import ConversationBufferMemory
 
 # Streamlit page configuration
 st.set_page_config(page_title="CSV Q&A Chatbot", page_icon="📊")
-st.header("Chat with Your CSV Data 💬")
+st.header("RAG CSV Q&A Chatbot 💬")
 
 # Initialize session state
 if "messages" not in st.session_state:
@@ -43,6 +43,7 @@ if uploaded_file and hf_token:
         # Load CSV data using LangChain CSVLoader
         loader = CSVLoader(file_path=tmp_file_path)
         documents = loader.load()
+        st.write(f"Loaded {len(documents)} documents from CSV.")
 
         # Check for sentence-transformers
         try:
@@ -55,19 +56,25 @@ if uploaded_file and hf_token:
         # Initialize embeddings and vector store
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
         st.session_state.vector_store = FAISS.from_documents(documents, embeddings)
+        st.write("Vector store initialized with FAISS.")
 
-        # Initialize Hugging Face LLM with conversational task
+        # Initialize Hugging Face LLM
         try:
             llm = HuggingFaceEndpoint(
                 repo_id="mistralai/Mixtral-8x7B-Instruct-v0.1",
                 huggingfacehub_api_token=hf_token,
                 temperature=0.7,
-                task="conversational"  # Explicitly set task to conversational
+                task="conversational"  # Set task to conversational
             )
+            st.write("Using model: mistralai/Mixtral-8x7B-Instruct-v0.1 with task=conversational")
         except Exception as e:
-            st.error(f"Failed to initialize Hugging Face model: {str(e)}")
-            os.unlink(tmp_file_path)
-            st.stop()
+            st.warning(f"Failed to initialize Mixtral model: {str(e)}. Falling back to google/flan-t5-large.")
+            llm = HuggingFaceEndpoint(
+                repo_id="google/flan-t5-large",
+                huggingfacehub_api_token=hf_token,
+                temperature=0.7
+            )
+            st.write("Using fallback model: google/flan-t5-large")
 
         # Set up conversation chain with memory
         memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)

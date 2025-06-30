@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import faiss
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
+from huggingface_hub import InferenceClient
 import chardet
 import logging
 
@@ -47,6 +47,18 @@ def read_csv_with_encoding(file, encoding_choice):
         logger.error(f"Error reading CSV: {str(e)}")
         return None
 
+# Fungsi untuk memvalidasi token API
+@st.cache_resource
+def validate_api_token(api_token):
+    try:
+        client = InferenceClient(token=api_token)
+        client.text_generation("Test", model="google/flan-t5-small")
+        return True
+    except Exception as e:
+        st.error(f"Invalid Hugging Face API token: {str(e)}")
+        logger.error(f"Invalid API token: {str(e)}")
+        return False
+
 # Fungsi untuk memproses data tabular
 @st.cache_data
 def process_tabular_data(_df):
@@ -86,33 +98,19 @@ def search_documents(query, index, model, documents, k=3):
         logger.error(f"Error searching documents: {str(e)}")
         return []
 
-# Fungsi untuk memuat model GPT-2 lokal
-@st.cache_resource
-def load_gpt2_model():
+# Fungsi untuk menghasilkan jawaban dengan Inference API
+def generate_answer(query, context, api_token):
     try:
-        model_name = "distilgpt2"
-        tokenizer = GPT2Tokenizer.from_pretrained(model_name)
-        model = GPT2LMHeadModel.from_pretrained(model_name)
-        return model, tokenizer
-    except Exception as e:
-        st.error(f"Error loading GPT-2 model: {str(e)}")
-        logger.error(f"Error loading GPT-2 model: {str(e)}")
-        return None, None
-
-# Fungsi untuk menghasilkan jawaban dengan GPT-2 lokal
-def generate_answer(query, context, model, tokenizer):
-    try:
+        client = InferenceClient(model="google/flan-t5-small", token=api_token)
         input_text = f"Berdasarkan konteks berikut: {context}\nJawab pertanyaan: {query}"
-        inputs = tokenizer(input_text, return_tensors="pt", max_length=512, truncation=True)
-        outputs = model.generate(
-            inputs["input_ids"],
+        response = client.text_generation(
+            input_text,
             max_length=100,
-            num_beams=4,
-            early_stopping=True,
-            no_repeat_ngram_size=2,
-            pad_token_id=tokenizer.eos_token_id
+            temperature=0.7,
+            top_p=0.9,
+            do_sample=True
         )
-        return tokenizer.decode(outputs[0], skip_special_tokens=True)
+        return response
     except Exception as e:
         st.error(f"Error generating answer: {str(e)}")
         logger.error(f"Error generating answer: {str(e)}")
@@ -123,12 +121,15 @@ st.title("Customer Review Analysis with RAG")
 
 # Deskripsi aplikasi
 st.markdown("""
-Aplikasi ini memungkinkan Anda mengunggah file CSV berisi data ulasan pelanggan (misalnya, produk, rating, komentar) dan mengajukan pertanyaan dalam bahasa Indonesia. Sistem akan mencari ulasan yang relevan dan menghasilkan jawaban menggunakan model bahasa ringan.
+Aplikasi ini memungkinkan Anda mengunggah file CSV berisi data ulasan pelanggan (misalnya, produk, rating, komentar) dan mengajukan pertanyaan dalam bahasa Indonesia. Sistem akan mencari ulasan yang relevan dan menghasilkan jawaban menggunakan Hugging Face Inference API.
 """)
 
 # Sidebar untuk input
 with st.sidebar:
     st.header("Konfigurasi")
+    api_token = st.text_input("Masukkan Hugging Face API Token:", type="password")
+    if api_token and not validate_api_token(api_token):
+        st.stop()
     uploaded_file = st.file_uploader("Unggah file CSV", type=["csv"])
     encoding_choice = st.selectbox("Pilih encoding CSV (opsional):", ["auto", "utf-8", "latin1", "iso-8859-1", "windows-1252"])
 
@@ -151,6 +152,9 @@ if uploaded_file:
         # Input query
         query = st.text_input("Masukkan pertanyaan Anda (misalnya, 'Produk apa yang mendapat ulasan terbaik?'):")
         if query:
+            if not api_token:
+                st.error("Harap masukkan Hugging Face API Token di sidebar.")
+                st.stop()
             # Cari dokumen relevan
             results = search_documents(query, index, model, documents)
             if results:
@@ -161,11 +165,8 @@ if uploaded_file:
                 # Gabungkan konteks untuk LLM
                 context = "\n".join([doc for doc, _ in results])
                 with st.spinner("Menghasilkan jawaban..."):
-                    gpt2_model, gpt2_tokenizer = load_gpt2_model()
-                    if gpt2_model is None:
-                        st.stop()
-                    answer = generate_answer(query, context, gpt2_model, gpt2_tokenizer)
+                    answer = generate_answer(query, context, api_token)
                     st.write("Jawaban:")
                     st.write(answer)
 else:
-    st.info("Silakan unggah file CSV di sidebar untuk memulai.")
+    st.info("Silakan unggah file CSV dan masukkan API token di sidebar untuk memulai.")

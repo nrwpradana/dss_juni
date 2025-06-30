@@ -5,4 +5,5 @@ numpy
 sentence-transformers
 langchain
 langchain-huggingface
+langchain-community
 huggingface_hub

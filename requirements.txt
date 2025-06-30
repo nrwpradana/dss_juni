@@ -4,3 +4,4 @@ langchain-huggingface
 langchain-community
 pandas
 faiss-cpu
+sentence-transformers

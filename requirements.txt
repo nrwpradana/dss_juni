@@ -1,13 +1,10 @@
 streamlit
 pandas
+PyMuPDF
+pdfplumber
+faiss-cpu
 numpy
 sentence-transformers
-faiss-cpu
 langchain
-transformers
-torch
-chardet
-langchain-community
 langchain-huggingface
 huggingface_hub
-langchain

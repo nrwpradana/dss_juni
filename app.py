@@ -5,6 +5,36 @@ from sentence_transformers import SentenceTransformer
 import faiss
 from langchain.llms import HuggingFaceHub
 from langchain.prompts import PromptTemplate
+import chardet
+
+# Fungsi untuk mendeteksi encoding file
+def detect_encoding(file):
+    raw_data = file.read()
+    result = chardet.detect(raw_data)
+    file.seek(0)  # Reset file pointer
+    return result['encoding']
+
+# Fungsi untuk membaca CSV dengan penanganan encoding
+def read_csv_with_encoding(file):
+    try:
+        # Coba deteksi encoding
+        encoding = detect_encoding(file)
+        st.write(f"Detected encoding: {encoding}")
+        return pd.read_csv(file, encoding=encoding)
+    except UnicodeDecodeError:
+        # Fallback ke encoding alternatif
+        encodings = ['latin1', 'iso-8859-1', 'windows-1252']
+        for enc in encodings:
+            try:
+                file.seek(0)  # Reset file pointer
+                return pd.read_csv(file, encoding=enc)
+            except UnicodeDecodeError:
+                continue
+        st.error("Gagal membaca file CSV. Pastikan file menggunakan encoding yang valid (UTF-8, Latin1, dll.).")
+        return None
+    except Exception as e:
+        st.error(f"Error membaca file CSV: {str(e)}")
+        return None
 
 # Fungsi untuk memproses data tabular
 def process_tabular_data(df):
@@ -47,35 +77,45 @@ def generate_answer(query, context, api_token):
 # Streamlit App
 st.title("RAG-Enhanced Structured Data Insights")
 
-# Input Hugging Face API token
-api_token = st.text_input("Masukkan Hugging Face API Token:", type="password")
-if not api_token:
-    st.warning("Silakan masukkan Hugging Face API Token untuk melanjutkan.")
-    st.stop()
+# Sidebar untuk input
+with st.sidebar:
+    st.header("Konfigurasi")
+    # Input Hugging Face API token
+    api_token = st.text_input("Masukkan Hugging Face API Token:", type="password")
+    if not api_token:
+        st.warning("Silakan masukkan Hugging Face API Token untuk melanjutkan.")
 
-# Upload file CSV
-uploaded_file = st.file_uploader("Unggah file CSV", type=["csv"])
+    # Upload file CSV
+    uploaded_file = st.file_uploader("Unggah file CSV", type=["csv"])
+
+# Main content
 if uploaded_file:
-    df = pd.read_csv(uploaded_file)
-    st.write("Data yang diunggah:")
-    st.dataframe(df)
+    df = read_csv_with_encoding(uploaded_file)
+    if df is not None:
+        st.write("Data yang diunggah:")
+        st.dataframe(df)
 
-    # Proses data
-    documents = process_tabular_data(df)
-    index, model, embeddings = create_index(documents)
+        # Proses data
+        documents = process_tabular_data(df)
+        index, model, embeddings = create_index(documents)
 
-    # Input query
-    query = st.text_input("Masukkan pertanyaan Anda:")
-    if query:
-        # Cari dokumen relevan
-        results = search_documents(query, index, model, documents)
-        st.write("Dokumen relevan:")
-        for doc, score in results:
-            st.write(f"Skor: {score:.4f} | {doc}")
+        # Input query
+        query = st.text_input("Masukkan pertanyaan Anda:")
+        if query:
+            if not api_token:
+                st.error("Harap masukkan Hugging Face API Token di sidebar.")
+            else:
+                # Cari dokumen relevan
+                results = search_documents(query, index, model, documents)
+                st.write("Dokumen relevan:")
+                for doc, score in results:
+                    st.write(f"Skor: {score:.4f} | {doc}")
 
-        # Gabungkan konteks untuk LLM
-        context = "\n".join([doc for doc, _ in results])
-        with st.spinner("Menghasilkan jawaban..."):
-            answer = generate_answer(query, context, api_token)
-        st.write("Jawaban:")
-        st.write(answer)
+                # Gabungkan konteks untuk LLM
+                context = "\n".join([doc for doc, _ in results])
+                with st.spinner("Menghasilkan jawaban..."):
+                    answer = generate_answer(query, context, api_token)
+                st.write("Jawaban:")
+                st.write(answer)
+else:
+    st.info("Silakan unggah file CSV di sidebar untuk memulai.")

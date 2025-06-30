@@ -8,7 +8,7 @@ import chardet
 import torch
 import logging
 
-# Setup logging untuk debugging di Streamlit Cloud
+# Setup logging untuk debugging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ def detect_encoding(file):
         return result['encoding']
     except Exception as e:
         logger.error(f"Error detecting encoding: {str(e)}")
-        return 'utf-8'
+        return None
 
 # Fungsi untuk membaca CSV dengan penanganan encoding
 def read_csv_with_encoding(file, encoding_choice):
@@ -29,9 +29,10 @@ def read_csv_with_encoding(file, encoding_choice):
         if encoding_choice != "auto":
             return pd.read_csv(file, encoding=encoding_choice)
         encoding = detect_encoding(file)
-        st.write(f"Detected encoding: {encoding}")
-        return pd.read_csv(file, encoding=encoding)
-    except UnicodeDecodeError:
+        if encoding:
+            logger.info(f"Detected encoding: {encoding}")
+            st.write(f"Detected encoding: {encoding}")
+            return pd.read_csv(file, encoding=encoding)
         encodings = ['latin1', 'iso-8859-1', 'windows-1252']
         for enc in encodings:
             try:
@@ -40,10 +41,11 @@ def read_csv_with_encoding(file, encoding_choice):
             except UnicodeDecodeError:
                 continue
         st.error("Gagal membaca file CSV. Pastikan file menggunakan encoding yang valid (UTF-8, Latin1, dll.).")
+        logger.error("Failed to read CSV with all encodings")
         return None
     except Exception as e:
-        logger.error(f"Error reading CSV: {str(e)}")
         st.error(f"Error membaca file CSV: {str(e)}")
+        logger.error(f"Error reading CSV: {str(e)}")
         return None
 
 # Fungsi untuk memproses data tabular
@@ -56,33 +58,33 @@ def process_tabular_data(_df):
             documents.append(doc)
         return documents
     except Exception as e:
-        logger.error(f"Error processing tabular data: {str(e)}")
         st.error(f"Error processing data: {str(e)}")
-        return []
+        logger.error(f"Error processing data: {str(e)}")
+        return None
 
 # Fungsi untuk indexing dan pencarian
 @st.cache_resource
 def create_index(_documents):
     try:
-        model = SentenceTransformer('distilbert-base-nli-mean-tokens', device='cpu')
-        embeddings = model.encode(_documents, show_progress_bar=False, batch_size=16)
+        model = SentenceTransformer('distilbert-base-multilingual-cased')
+        embeddings = model.encode(_documents, show_progress_bar=False)
         index = faiss.IndexFlatL2(embeddings.shape[1])
         index.add(embeddings)
         return index, model, embeddings
     except Exception as e:
-        logger.error(f"Error creating index: {str(e)}")
         st.error(f"Error creating index: {str(e)}")
+        logger.error(f"Error creating index: {str(e)}")
         return None, None, None
 
 # Fungsi untuk mencari dokumen relevan
 def search_documents(query, index, model, documents, k=3):
     try:
-        query_embedding = model.encode([query], show_progress_bar=False)
+        query_embedding = model.encode([query])
         distances, indices = index.search(query_embedding, k)
         return [(documents[i], distances[0][j]) for j, i in enumerate(indices[0])]
     except Exception as e:
-        logger.error(f"Error searching documents: {str(e)}")
         st.error(f"Error searching documents: {str(e)}")
+        logger.error(f"Error searching documents: {str(e)}")
         return []
 
 # Fungsi untuk memuat model T5 lokal
@@ -94,15 +96,15 @@ def load_t5_model():
         model = T5ForConditionalGeneration.from_pretrained(model_name)
         return model, tokenizer
     except Exception as e:
+        st.error(f"Error loading T5 model: {str(e)}")
         logger.error(f"Error loading T5 model: {str(e)}")
-        st.error(f"Error loading model: {str(e)}")
         return None, None
 
 # Fungsi untuk menghasilkan jawaban dengan T5 lokal
 def generate_answer(query, context, model, tokenizer):
     try:
-        prompt = f"Berdasarkan konteks berikut: {context}\nJawab pertanyaan: {query}"
-        inputs = tokenizer(prompt, return_tensors="pt", max_length=512, truncation=True)
+        input_text = f"Berdasarkan konteks berikut: {context}\nJawab pertanyaan: {query}"
+        inputs = tokenizer(input_text, return_tensors="pt", max_length=512, truncation=True)
         outputs = model.generate(
             inputs["input_ids"],
             max_length=512,
@@ -111,6 +113,7 @@ def generate_answer(query, context, model, tokenizer):
         )
         return tokenizer.decode(outputs[0], skip_special_tokens=True)
     except Exception as e:
+        st.error(f"Error generating answer: {str(e)}")
         logger.error(f"Error generating answer: {str(e)}")
         return f"Error generating answer: {str(e)}"
 
@@ -127,9 +130,7 @@ with st.sidebar:
 
 # Main content
 if uploaded_file:
-    with st.spinner("Memproses file CSV..."):
-        df = read_csv_with_encoding(uploaded_file, encoding_choice)
-    
+    df = read_csv_with_encoding(uploaded_file, encoding_choice)
     if df is not None:
         st.write("Data yang diunggah:")
         st.dataframe(df)
@@ -137,7 +138,7 @@ if uploaded_file:
         # Proses data
         with st.spinner("Memproses data..."):
             documents = process_tabular_data(df)
-            if not documents:
+            if documents is None:
                 st.stop()
             index, model, embeddings = create_index(documents)
             if index is None:
@@ -147,10 +148,20 @@ if uploaded_file:
         query = st.text_input("Masukkan pertanyaan Anda:")
         if query:
             # Cari dokumen relevan
-            with st.spinner("Mencari dokumen relevan..."):
-                results = search_documents(query, index, model, documents)
-                if not results:
-                    st.stop()
+            results = search_documents(query, index, model, documents)
+            if results:
                 st.write("Dokumen relevan:")
                 for doc, score in results:
-                    st.write(f"Skor: {score Facade:
+                    st.write(f"Skor: {score:.4f} | {doc}")
+
+                # Gabungkan konteks untuk LLM
+                context = "\n".join([doc for doc, _ in results])
+                with st.spinner("Menghasilkan jawaban..."):
+                    t5_model, t5_tokenizer = load_t5_model()
+                    if t5_model is None:
+                        st.stop()
+                    answer = generate_answer(query, context, t5_model, t5_tokenizer)
+                    st.write("Jawaban:")
+                    st.write(answer)
+else:
+    st.info("Silakan unggah file CSV di sidebar untuk memulai.")

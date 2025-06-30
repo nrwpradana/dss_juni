@@ -1,118 +1,105 @@
+# Importing Libraries
 import streamlit as st
 import pandas as pd
-import faiss
-import numpy as np
-from sentence_transformers import SentenceTransformer
-from huggingface_hub import InferenceClient
-import os
-import uuid
+from dotenv import load_dotenv
+from langchain.text_splitter import CharacterTextSplitter
+from langchain.vectorstores import FAISS
+from langchain.memory import ConversationBufferMemory
+from langchain.chains import ConversationalRetrievalChain
+from langchain.llms import HuggingFaceHub
+from langchain_community.embeddings import HuggingFaceHubEmbeddings
 
-# Hugging Face API Key input
-hf_api_key = st.sidebar.text_input("🔑 Enter Hugging Face API Key", type="password")
+# Extracting text from CSV file
+def get_text_from_csv(csv_file) -> str:
+    # Read the CSV file
+    df = pd.read_csv(csv_file)
+    # Assuming the CSV has a column named 'content' with the text data
+    # Modify the column name if your CSV uses a different one
+    if 'content' not in df.columns:
+        raise ValueError("CSV must contain a 'content' column with text data")
+    text = " ".join(df['content'].astype(str).tolist())
+    return text
 
-# Streamlit UI
-st.title("📊 CSV Q&A Chatbot")
-st.write("Upload a CSV and ask questions based on its content!")
-
-# File uploader for CSV
-uploaded_file = st.file_uploader("Upload a CSV", type="csv")
-if not hf_api_key:
-    st.warning("Please enter your Hugging Face API key to proceed.")
-    st.stop()
-
-# Initialize session state for unique user isolation
-if "session_id" not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())  # Unique ID for each user session
-
-if "faiss_index" not in st.session_state:
-    st.session_state.faiss_index = None
-
-if "text_chunks" not in st.session_state:
-    st.session_state.text_chunks = None
-
-# Load embedding model
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-
-# Function to extract text from CSV
-def extract_text_from_csv(csv_path):
-    # Read CSV into a pandas DataFrame
-    df = pd.read_csv(csv_path)
-    
-    # Convert each row to a text representation
-    text_chunks = []
-    for index, row in df.iterrows():
-        # Combine all columns into a single string for the row
-        row_text = " | ".join([f"{col}: {str(val)}" for col, val in row.items()])
-        text_chunks.append(row_text)
-    
-    # Combine all rows into a single text string
-    all_text = "\n\n".join(text_chunks)
-    return all_text, text_chunks
-
-# Function to store text embeddings in FAISS
-def create_faiss_index(text_data):
-    text_chunks = text_data.split("\n\n")  # Split text into chunks (one per row)
-    embeddings = np.array([embedding_model.encode(chunk) for chunk in text_chunks])
-
-    dim = embeddings.shape[1]
-    index = faiss.IndexFlatL2(dim)
-    index.add(embeddings)
-    
-    return index, text_chunks
-
-# Function to retrieve relevant text
-def retrieve_relevant_text(query, index, text_chunks, top_k=3):
-    query_embedding = np.array([embedding_model.encode(query)])
-    distances, indices = index.search(query_embedding, top_k)
-    
-    return [text_chunks[i] for i in indices[0]]
-
-# Function to run QA with InferenceClient
-def run_qa(context, question, api_key):
-    client = InferenceClient(api_key=api_key, model="mistralai/Mistral-7B-Instruct-v0.3")
-    prompt = f"Answer based on the context below:\n\nContext: {context}\n\nQuestion: {question}\n\nAnswer:"
-    response = client.text_generation(
-        prompt,
-        max_new_tokens=200,
-        temperature=0.5,
-        do_sample=True
+# Processing & Converting the texts into chunks
+def get_chunks(text: str) -> list:
+    text_splitter = CharacterTextSplitter(
+        separator="\n",
+        chunk_size=1000,
+        chunk_overlap=200,
+        length_function=len
     )
-    # Extract the generated text (strip any metadata if present)
-    if isinstance(response, dict):
-        return response.get('generated_text', response)
-    return response
+    chunks = text_splitter.split_text(text)
+    return chunks
 
-# Process uploaded CSV
-if uploaded_file and hf_api_key:
-    st.write("✅ CSV uploaded successfully!")
+# Getting Vector Database and Embeddings
+def get_vectors(chunks: list):
+    embeddings = HuggingFaceHubEmbeddings(
+        model="avsolatorio/GIST-Embedding-v0",
+        huggingfacehub_api_token="hf_token_here"
+    )
+    vectors = FAISS.from_texts(texts=chunks, embedding=embeddings)
+    return vectors
 
-    # Create a unique file path for the user's session
-    csv_path = f"uploaded_{st.session_state.session_id}.csv"
-    
-    with open(csv_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
+# Getting Conversational Chain 
+def get_conversational_chain(vectors):
+    llm = HuggingFaceHub(
+        repo_id='google/flan-t5-large',
+        model_kwargs={"temperature": 0.9, "max_length": 2048}
+    )
+    memory = ConversationBufferMemory(
+        memory_key='chat_history',
+        return_messages=True
+    )
+    conversational_chain = ConversationalRetrievalChain.from_llm(
+        llm=llm,
+        retriever=vectors.as_retriever(),
+        memory=memory
+    )
+    return conversational_chain
 
-    # Extract content from CSV
-    all_text_data, text_chunks = extract_text_from_csv(csv_path)
+# Main Function
+def main():
+    st.set_page_config(
+        page_title='RAG Chatbot',
+        page_icon="🤖"
+    )
+    st.title("RAG Chatbot 🤖", anchor=None)
+    load_dotenv()
 
-    # Create FAISS index (store it per user session)
-    index, text_chunks = create_faiss_index(all_text_data)
-    
-    st.session_state.faiss_index = index
-    st.session_state.text_chunks = text_chunks
+    # Initialize session state
+    if "conversation" not in st.session_state:
+        st.session_state.conversation = None
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
 
-    st.success("✅ CSV processed! You can now ask questions.")
+    # File uploader for CSV
+    csv_file = st.file_uploader("Upload a CSV", type="csv", label_visibility='hidden')
 
-# User input for Q&A
-user_question = st.text_input("Ask a question about the CSV:")
-if user_question and st.session_state.faiss_index:
-    relevant_chunks = retrieve_relevant_text(user_question, st.session_state.faiss_index, st.session_state.text_chunks)
-    context = "\n".join(relevant_chunks)
+    if csv_file:
+        with st.spinner("Processing the CSV"):
+            raw_text = get_text_from_csv(csv_file)
+            text_chunks = get_chunks(raw_text)
+            vector = get_vectors(text_chunks)
+            st.session_state.conversation = get_conversational_chain(vector)
 
-    # Generate answer using InferenceClient
-    answer = run_qa(context, user_question, hf_api_key)
+    # Chat input
+    question = st.chat_input("Ask anything")
+    if question:
+        st.session_state.chat_history.append({
+            "role": "user",
+            "content": question
+        })
+        with st.chat_message("user"):
+            st.markdown(question)
+        with st.spinner("Thinking"):
+            response = st.session_state.conversation({'question': question})
+            st.session_state.chat_history = response['chat_history']
+            st.session_state.chat_history.append({
+                "role": "Assistant",
+                "content": response['answer']
+            })
+            with st.chat_message("Assistant"):
+                st.markdown(response['answer'])
 
-    st.write("### Answer:")
-    st.write(answer)
-else:
-    st.warning("Please upload a CSV and enter a Hugging Face API Key.")
+if __name__ == '__main__':
+    main()

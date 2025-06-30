@@ -62,7 +62,7 @@ def search_documents(query, index, model, documents, k=3):
 def generate_answer(query, context, api_token):
     try:
         llm = HuggingFaceHub(
-            repo_id="meta-llama/Llama-3-8b",
+            repo_id="meta-llama/Meta-Llama-3-8B",
             huggingfacehub_api_token=api_token
         )
         prompt = PromptTemplate(

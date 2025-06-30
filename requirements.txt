@@ -2,6 +2,7 @@ streamlit
 langchain
 langchain-huggingface
 langchain-community
+langchain
 pandas
 faiss-cpu
 sentence-transformers

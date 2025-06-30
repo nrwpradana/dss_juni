@@ -1,129 +1,66 @@
 import streamlit as st
 import pandas as pd
-import tempfile
 import os
-from langchain.document_loaders.csv_loader import CSVLoader
-from langchain_huggingface import HuggingFaceEmbeddings, HuggingFaceEndpoint
-from langchain.vectorstores import FAISS  # Updated import
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.document_loaders import DataFrameLoader
+from langchain.text_splitter import CharacterTextSplitter
+from langchain.chains import RetrievalQA
+from langchain.llms import HuggingFaceHub
 
-# Streamlit page configuration
-st.set_page_config(page_title="CSV Q&A Chatbot", page_icon="📊")
-st.header("RAG CSV Q&A Chatbot 💬")
+st.set_page_config(page_title="CSV Q&A Chatbot", layout="centered")
+st.title("📊 CSV Q&A Chatbot with RAG + Hugging Face")
 
-# Initialize session state
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Enter your Hugging Face API token and upload a CSV file to start chatting!"}]
-if "vector_store" not in st.session_state:
-    st.session_state.vector_store = None
-if "conversation" not in st.session_state:
-    st.session_state.conversation = None
-if "hf_token" not in st.session_state:
-    st.session_state.hf_token = ""
+# Step 1: Ask for API token securely
+api_token = st.text_input("🔐 Enter your Hugging Face API token:", type="password")
+if not api_token:
+    st.warning("Please enter your Hugging Face API token to proceed.")
+    st.stop()
 
-# Input for Hugging Face API token
-st.subheader("Hugging Face API Token")
-hf_token = st.text_input("Enter your Hugging Face API token:", type="password", value=st.session_state.hf_token)
-if hf_token:
-    st.session_state.hf_token = hf_token
-    st.success("API token saved for this session.")
-else:
-    st.warning("Please enter a valid Hugging Face API token to proceed.")
+# Set environment variable dynamically
+os.environ["HUGGINGFACEHUB_API_TOKEN"] = api_token
 
-# File uploader for CSV
-uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
-if uploaded_file and hf_token:
-    try:
-        # Save uploaded file to temporary location
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
-            tmp_file.write(uploaded_file.read())
-            tmp_file_path = tmp_file.name
+# Step 2: Upload CSV
+uploaded_file = st.file_uploader("📁 Upload your CSV file", type=["csv"])
 
-        # Load CSV data using LangChain CSVLoader
-        loader = CSVLoader(file_path=tmp_file_path)
-        documents = loader.load()
-        if documents:
-            st.write(f"Loaded {len(documents)} documents from CSV.")
-        else:
-            st.error("No data loaded from CSV. Please check the file format.")
-            os.unlink(tmp_file_path)
-            st.stop()
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+    st.write("✅ Preview of uploaded CSV:")
+    st.dataframe(df.head())
 
-        # Check for sentence-transformers
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError:
-            st.error("The 'sentence-transformers' package is missing. Please install it with 'pip install sentence-transformers'.")
-            os.unlink(tmp_file_path)
-            st.stop()
+    # Step 3: Convert CSV rows into plain text documents
+    docs = []
+    for _, row in df.iterrows():
+        text = "\n".join([f"{col}: {row[col]}" for col in df.columns])
+        docs.append(text)
 
-        # Initialize embeddings and vector store
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-        st.session_state.vector_store = FAISS.from_documents(documents, embeddings)
-        st.write("Vector store initialized with FAISS.")
+    # Step 4: Split text into chunks
+    text_splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    texts = text_splitter.create_documents(docs)
 
-        # Initialize Hugging Face LLM
-        model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
-        try:
-            llm = HuggingFaceEndpoint(
-                repo_id=model_id,
-                huggingfacehub_api_token=hf_token,
-                temperature=0.7,
-                task="conversational"  # Explicitly set task
-            )
-            st.write(f"Using model: {model_id} with task=conversational")
-        except Exception as e:
-            st.warning(f"Failed to initialize {model_id}: {str(e)}. Falling back to google/flan-t5-large.")
-            model_id = "google/flan-t5-large"
-            llm = HuggingFaceEndpoint(
-                repo_id=model_id,
-                huggingfacehub_api_token=hf_token,
-                temperature=0.7
-            )
-            st.write(f"Using fallback model: {model_id}")
+    # Step 5: Embed and index with FAISS
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    vectorstore = FAISS.from_documents(texts, embeddings)
 
-        # Set up conversation chain with memory
-        memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-        st.session_state.conversation = ConversationalRetrievalChain.from_llm(
-            llm=llm,
-            retriever=st.session_state.vector_store.as_retriever(search_kwargs={"k": 5}),
-            memory=memory
-        )
+    # Step 6: Setup LLM with Hugging Face
+    llm = HuggingFaceHub(
+        repo_id="mistralai/Mistral-7B-Instruct-v0.1",
+        model_kwargs={"temperature": 0.5, "max_new_tokens": 512}
+    )
 
-        # Clean up temporary file
-        os.unlink(tmp_file_path)
-        st.success("CSV file processed! You can now ask questions.")
-    except Exception as e:
-        st.error(f"Error processing CSV or initializing model: {str(e)}")
-        if os.path.exists(tmp_file_path):
-            os.unlink(tmp_file_path)
-elif uploaded_file and not hf_token:
-    st.error("Please enter a Hugging Face API token before uploading a CSV.")
+    # Step 7: QA chain using vectorstore retriever
+    qa_chain = RetrievalQA.from_chain_type(
+        llm=llm,
+        chain_type="stuff",
+        retriever=vectorstore.as_retriever()
+    )
 
-# Display chat history
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.write(message["content"])
+    # Step 8: User Q&A
+    st.markdown("---")
+    st.subheader("💬 Ask a question about your CSV:")
+    question = st.text_input("Type your question:")
 
-# Chat input
-if prompt := st.chat_input("Ask a question about your CSV data"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.write(prompt)
-
-    # Generate response if conversation chain is initialized
-    if st.session_state.conversation:
-        try:
-            with st.chat_message("assistant"):
-                response = st.session_state.conversation.invoke({"question": prompt})["answer"]  # Use invoke instead of __call__
-                st.write(response)
-                st.session_state.messages.append({"role": "assistant", "content": response})
-        except Exception as e:
-            with st.chat_message("assistant"):
-                st.write(f"Error generating response: {str(e)}")
-                st.session_state.messages.append({"role": "assistant", "content": f"Error generating response: {str(e)}"})
-    else:
-        with st.chat_message("assistant"):
-            st.write("Please upload a CSV file and ensure a valid API token is provided.")
-            st.session_state.messages.append({"role": "assistant", "content": "Please upload a CSV file and ensure a valid API token is provided."})
+    if question:
+        with st.spinner("🔍 Thinking..."):
+            answer = qa_chain.run(question)
+            st.success(answer)

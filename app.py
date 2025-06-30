@@ -3,9 +3,10 @@ import pandas as pd
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import faiss
-from langchain.llms import HuggingFaceHub
+from langchain_huggingface import HuggingFaceEndpoint
 from langchain.prompts import PromptTemplate
 import chardet
+import os
 
 # Fungsi untuk mendeteksi encoding file
 def detect_encoding(file):
@@ -61,18 +62,21 @@ def search_documents(query, index, model, documents, k=3):
 # Fungsi untuk menghasilkan jawaban dengan LLM
 def generate_answer(query, context, api_token):
     try:
-        llm = HuggingFaceHub(
-            repo_id="meta-llama/Meta-Llama-3-8B",
-            huggingfacehub_api_token=api_token
+        llm = HuggingFaceEndpoint(
+            repo_id="meta-llama/Meta-Llama-3-8B",  # Correct model ID; use "google/flan-t5-base" for testing if no access
+            huggingfacehub_api_token=api_token,
+            max_new_tokens=512,  # Adjust based on needs
+            temperature=0.7      # Adjust for response creativity
         )
         prompt = PromptTemplate(
             input_variables=["query", "context"],
             template="Berdasarkan konteks berikut: {context}\nJawab pertanyaan: {query}"
         )
-        response = llm(prompt.format(query=query, context=context))
+        response = llm.invoke(prompt.format(query=query, context=context))
         return response
     except Exception as e:
-        return f"Error: {str(e)}"
+        st.error(f"Error generating answer: {str(e)}")
+        return None
 
 # Streamlit App
 st.title("RAG-Enhanced Structured Data Insights")
@@ -80,10 +84,10 @@ st.title("RAG-Enhanced Structured Data Insights")
 # Sidebar untuk input
 with st.sidebar:
     st.header("Konfigurasi")
-    # Input Hugging Face API token
-    api_token = st.text_input("Masukkan Hugging Face API Token:", type="password")
+    # Input Hugging Face API token (prefer environment variable)
+    api_token = os.getenv("HUGGINGFACEHUB_API_TOKEN") or st.text_input("Masukkan Hugging Face API Token:", type="password")
     if not api_token:
-        st.warning("Silakan masukkan Hugging Face API Token untuk melanjutkan.")
+        st.warning("Silakan masukkan Hugging Face API Token di sidebar atau setel sebagai variabel lingkungan HUGGINGFACEHUB_API_TOKEN.")
 
     # Upload file CSV
     uploaded_file = st.file_uploader("Unggah file CSV", type=["csv"])
@@ -103,8 +107,12 @@ if uploaded_file:
         query = st.text_input("Masukkan pertanyaan Anda:")
         if query:
             if not api_token:
-                st.error("Harap masukkan Hugging Face API Token di sidebar.")
+                st.error("Harap masukkan Hugging Face API Token di sidebar atau setel sebagai variabel lingkungan.")
             else:
+                # Debug info
+                st.write(f"Using model: meta-llama/Meta-Llama-3-8B")
+                st.write(f"API token (partial): {api_token[:5]}...")
+
                 # Cari dokumen relevan
                 results = search_documents(query, index, model, documents)
                 st.write("Dokumen relevan:")
@@ -115,7 +123,8 @@ if uploaded_file:
                 context = "\n".join([doc for doc, _ in results])
                 with st.spinner("Menghasilkan jawaban..."):
                     answer = generate_answer(query, context, api_token)
-                st.write("Jawaban:")
-                st.write(answer)
+                if answer:
+                    st.write("Jawaban:")
+                    st.write(answer)
 else:
     st.info("Silakan unggah file CSV di sidebar untuk memulai.")

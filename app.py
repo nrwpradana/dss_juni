@@ -44,6 +44,14 @@ if uploaded_file and hf_token:
         loader = CSVLoader(file_path=tmp_file_path)
         documents = loader.load()
 
+        # Check for sentence-transformers
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            st.error("The 'sentence-transformers' package is missing. Please install it with 'pip install sentence-transformers'.")
+            os.unlink(tmp_file_path)
+            st.stop()
+
         # Initialize embeddings and vector store
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
         st.session_state.vector_store = FAISS.from_documents(documents, embeddings)
@@ -68,6 +76,8 @@ if uploaded_file and hf_token:
         st.success("CSV file processed! You can now ask questions.")
     except Exception as e:
         st.error(f"Error processing CSV or initializing model: {str(e)}")
+        if os.path.exists(tmp_file_path):
+            os.unlink(tmp_file_path)
 elif uploaded_file and not hf_token:
     st.error("Please enter a Hugging Face API token before uploading a CSV.")
 

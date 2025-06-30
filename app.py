@@ -17,16 +17,14 @@ def detect_encoding(file):
 # Fungsi untuk membaca CSV dengan penanganan encoding
 def read_csv_with_encoding(file):
     try:
-        # Coba deteksi encoding
         encoding = detect_encoding(file)
         st.write(f"Detected encoding: {encoding}")
         return pd.read_csv(file, encoding=encoding)
     except UnicodeDecodeError:
-        # Fallback ke encoding alternatif
         encodings = ['latin1', 'iso-8859-1', 'windows-1252']
         for enc in encodings:
             try:
-                file.seek(0)  # Reset file pointer
+                file.seek(0)
                 return pd.read_csv(file, encoding=enc)
             except UnicodeDecodeError:
                 continue
@@ -35,6 +33,17 @@ def read_csv_with_encoding(file):
     except Exception as e:
         st.error(f"Error membaca file CSV: {str(e)}")
         return None
+
+# Fungsi untuk memvalidasi token API
+def validate_api_token(api_token):
+    try:
+        from huggingface_hub import HfApi
+        api = HfApi(token=api_token)
+        api.list_models(limit=1)  # Coba panggil API sederhana
+        return True
+    except Exception as e:
+        st.error(f"Invalid Hugging Face API token: {str(e)}")
+        return False
 
 # Fungsi untuk memproses data tabular
 def process_tabular_data(df):
@@ -46,7 +55,7 @@ def process_tabular_data(df):
 
 # Fungsi untuk indexing dan pencarian
 def create_index(documents):
-    model = SentenceTransformer('all-MiniLM-L6-v2')
+    model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')  # Model multibahasa
     embeddings = model.encode(documents)
     index = faiss.IndexFlatL2(embeddings.shape[1])
     index.add(embeddings)
@@ -62,8 +71,9 @@ def search_documents(query, index, model, documents, k=3):
 def generate_answer(query, context, api_token):
     try:
         llm = HuggingFaceHub(
-            repo_id="meta-llama/Llama-3-8b",
-            huggingfacehub_api_token=api_token
+            repo_id="google/flan-t5-base",  # Model ringan yang mendukung bahasa Indonesia
+            huggingfacehub_api_token=api_token,
+            model_kwargs={"max_length": 512, "temperature": 0.7}
         )
         prompt = PromptTemplate(
             input_variables=["query", "context"],
@@ -72,7 +82,7 @@ def generate_answer(query, context, api_token):
         response = llm(prompt.format(query=query, context=context))
         return response
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Error generating answer: {str(e)}"
 
 # Streamlit App
 st.title("RAG-Enhanced Structured Data Insights")
@@ -82,8 +92,8 @@ with st.sidebar:
     st.header("Konfigurasi")
     # Input Hugging Face API token
     api_token = st.text_input("Masukkan Hugging Face API Token:", type="password")
-    if not api_token:
-        st.warning("Silakan masukkan Hugging Face API Token untuk melanjutkan.")
+    if api_token and not validate_api_token(api_token):
+        st.stop()
 
     # Upload file CSV
     uploaded_file = st.file_uploader("Unggah file CSV", type=["csv"])

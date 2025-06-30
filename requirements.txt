@@ -7,3 +7,4 @@ langchain
 transformers
 torch
 chardet
+langchain-community

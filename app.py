@@ -3,9 +3,8 @@ import pandas as pd
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import faiss
-from transformers import T5ForConditionalGeneration, T5Tokenizer
+from transformers import GPT2LMHeadModel, GPT2Tokenizer
 import chardet
-import torch
 import logging
 
 # Setup logging untuk debugging
@@ -66,8 +65,8 @@ def process_tabular_data(_df):
 @st.cache_resource
 def create_index(_documents):
     try:
-        model = SentenceTransformer('distilbert-base-multilingual-cased')
-        embeddings = model.encode(_documents, show_progress_bar=False)
+        model = SentenceTransformer('sentence-transformers/distiluse-base-multilingual-cased-v2')
+        embeddings = model.encode(_documents, show_progress_bar=False, batch_size=16)
         index = faiss.IndexFlatL2(embeddings.shape[1])
         index.add(embeddings)
         return index, model, embeddings
@@ -87,29 +86,31 @@ def search_documents(query, index, model, documents, k=3):
         logger.error(f"Error searching documents: {str(e)}")
         return []
 
-# Fungsi untuk memuat model T5 lokal
+# Fungsi untuk memuat model GPT-2 lokal
 @st.cache_resource
-def load_t5_model():
+def load_gpt2_model():
     try:
-        model_name = "google/flan-t5-small"
-        tokenizer = T5Tokenizer.from_pretrained(model_name)
-        model = T5ForConditionalGeneration.from_pretrained(model_name)
+        model_name = "distilgpt2"
+        tokenizer = GPT2Tokenizer.from_pretrained(model_name)
+        model = GPT2LMHeadModel.from_pretrained(model_name)
         return model, tokenizer
     except Exception as e:
-        st.error(f"Error loading T5 model: {str(e)}")
-        logger.error(f"Error loading T5 model: {str(e)}")
+        st.error(f"Error loading GPT-2 model: {str(e)}")
+        logger.error(f"Error loading GPT-2 model: {str(e)}")
         return None, None
 
-# Fungsi untuk menghasilkan jawaban dengan T5 lokal
+# Fungsi untuk menghasilkan jawaban dengan GPT-2 lokal
 def generate_answer(query, context, model, tokenizer):
     try:
         input_text = f"Berdasarkan konteks berikut: {context}\nJawab pertanyaan: {query}"
         inputs = tokenizer(input_text, return_tensors="pt", max_length=512, truncation=True)
         outputs = model.generate(
             inputs["input_ids"],
-            max_length=512,
+            max_length=100,
             num_beams=4,
-            early_stopping=True
+            early_stopping=True,
+            no_repeat_ngram_size=2,
+            pad_token_id=tokenizer.eos_token_id
         )
         return tokenizer.decode(outputs[0], skip_special_tokens=True)
     except Exception as e:
@@ -118,14 +119,17 @@ def generate_answer(query, context, model, tokenizer):
         return f"Error generating answer: {str(e)}"
 
 # Streamlit App
-st.title("RAG-Enhanced Structured Data Insights")
+st.title("Customer Review Analysis with RAG")
+
+# Deskripsi aplikasi
+st.markdown("""
+Aplikasi ini memungkinkan Anda mengunggah file CSV berisi data ulasan pelanggan (misalnya, produk, rating, komentar) dan mengajukan pertanyaan dalam bahasa Indonesia. Sistem akan mencari ulasan yang relevan dan menghasilkan jawaban menggunakan model bahasa ringan.
+""")
 
 # Sidebar untuk input
 with st.sidebar:
     st.header("Konfigurasi")
-    # Upload file CSV
     uploaded_file = st.file_uploader("Unggah file CSV", type=["csv"])
-    # Opsi encoding manual
     encoding_choice = st.selectbox("Pilih encoding CSV (opsional):", ["auto", "utf-8", "latin1", "iso-8859-1", "windows-1252"])
 
 # Main content
@@ -145,7 +149,7 @@ if uploaded_file:
                 st.stop()
 
         # Input query
-        query = st.text_input("Masukkan pertanyaan Anda:")
+        query = st.text_input("Masukkan pertanyaan Anda (misalnya, 'Produk apa yang mendapat ulasan terbaik?'):")
         if query:
             # Cari dokumen relevan
             results = search_documents(query, index, model, documents)
@@ -157,10 +161,10 @@ if uploaded_file:
                 # Gabungkan konteks untuk LLM
                 context = "\n".join([doc for doc, _ in results])
                 with st.spinner("Menghasilkan jawaban..."):
-                    t5_model, t5_tokenizer = load_t5_model()
-                    if t5_model is None:
+                    gpt2_model, gpt2_tokenizer = load_gpt2_model()
+                    if gpt2_model is None:
                         st.stop()
-                    answer = generate_answer(query, context, t5_model, t5_tokenizer)
+                    answer = generate_answer(query, context, gpt2_model, gpt2_tokenizer)
                     st.write("Jawaban:")
                     st.write(answer)
 else:

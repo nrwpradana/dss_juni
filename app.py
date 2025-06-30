@@ -44,8 +44,8 @@ if uploaded_file:
 
     # Step 6: Setup LLM with Hugging Face
     llm = HuggingFaceHub(
-        repo_id="mistralai/Mistral-7B-Instruct-v0.1",
-        model_kwargs={"temperature": 0.5, "max_new_tokens": 512}
+    repo_id="tiiuae/falcon-7b-instruct",
+    model_kwargs={"temperature": 0.5, "max_new_tokens": 512}
     )
 
     # Step 7: QA chain using vectorstore retriever

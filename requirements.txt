@@ -1,7 +1,7 @@
-llama-cpp-python 
-huggingface_hub 
-streamlit 
-pandas 
-sentence-transformers 
-faiss-cpu
+streamlit
+pandas
 numpy
+sentence-transformers
+faiss-cpu
+langchain
+huggingface_hub

@@ -4,7 +4,7 @@ import tempfile
 import os
 from langchain.document_loaders.csv_loader import CSVLoader
 from langchain_huggingface import HuggingFaceEmbeddings, HuggingFaceEndpoint
-from langchain.vectorstores import FAISS
+from langchain.vectorstores import FAISS  # Updated import
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 
@@ -43,7 +43,12 @@ if uploaded_file and hf_token:
         # Load CSV data using LangChain CSVLoader
         loader = CSVLoader(file_path=tmp_file_path)
         documents = loader.load()
-        st.write(f"Loaded {len(documents)} documents from CSV.")
+        if documents:
+            st.write(f"Loaded {len(documents)} documents from CSV.")
+        else:
+            st.error("No data loaded from CSV. Please check the file format.")
+            os.unlink(tmp_file_path)
+            st.stop()
 
         # Check for sentence-transformers
         try:
@@ -59,28 +64,30 @@ if uploaded_file and hf_token:
         st.write("Vector store initialized with FAISS.")
 
         # Initialize Hugging Face LLM
+        model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
         try:
             llm = HuggingFaceEndpoint(
-                repo_id="mistralai/Mixtral-8x7B-Instruct-v0.1",
+                repo_id=model_id,
                 huggingfacehub_api_token=hf_token,
                 temperature=0.7,
-                task="conversational"  # Set task to conversational
+                task="conversational"  # Explicitly set task
             )
-            st.write("Using model: mistralai/Mixtral-8x7B-Instruct-v0.1 with task=conversational")
+            st.write(f"Using model: {model_id} with task=conversational")
         except Exception as e:
-            st.warning(f"Failed to initialize Mixtral model: {str(e)}. Falling back to google/flan-t5-large.")
+            st.warning(f"Failed to initialize {model_id}: {str(e)}. Falling back to google/flan-t5-large.")
+            model_id = "google/flan-t5-large"
             llm = HuggingFaceEndpoint(
-                repo_id="google/flan-t5-large",
+                repo_id=model_id,
                 huggingfacehub_api_token=hf_token,
                 temperature=0.7
             )
-            st.write("Using fallback model: google/flan-t5-large")
+            st.write(f"Using fallback model: {model_id}")
 
         # Set up conversation chain with memory
         memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
         st.session_state.conversation = ConversationalRetrievalChain.from_llm(
             llm=llm,
-            retriever=st.session_state.vector_store.as_retriever(),
+            retriever=st.session_state.vector_store.as_retriever(search_kwargs={"k": 5}),
             memory=memory
         )
 
@@ -109,7 +116,7 @@ if prompt := st.chat_input("Ask a question about your CSV data"):
     if st.session_state.conversation:
         try:
             with st.chat_message("assistant"):
-                response = st.session_state.conversation({"question": prompt})["answer"]
+                response = st.session_state.conversation.invoke({"question": prompt})["answer"]  # Use invoke instead of __call__
                 st.write(response)
                 st.session_state.messages.append({"role": "assistant", "content": response})
         except Exception as e:

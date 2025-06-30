@@ -56,12 +56,18 @@ if uploaded_file and hf_token:
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
         st.session_state.vector_store = FAISS.from_documents(documents, embeddings)
 
-        # Initialize Hugging Face LLM
-        llm = HuggingFaceEndpoint(
-            repo_id="mistralai/Mixtral-8x7B-Instruct-v0.1",
-            huggingfacehub_api_token=hf_token,
-            temperature=0.7
-        )
+        # Initialize Hugging Face LLM with conversational task
+        try:
+            llm = HuggingFaceEndpoint(
+                repo_id="mistralai/Mixtral-8x7B-Instruct-v0.1",
+                huggingfacehub_api_token=hf_token,
+                temperature=0.7,
+                task="conversational"  # Explicitly set task to conversational
+            )
+        except Exception as e:
+            st.error(f"Failed to initialize Hugging Face model: {str(e)}")
+            os.unlink(tmp_file_path)
+            st.stop()
 
         # Set up conversation chain with memory
         memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)

@@ -3,9 +3,7 @@ import pandas as pd
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
-from langchain.llms import HuggingFaceHub
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
+from huggingface_hub import InferenceClient
 import os
 import uuid
 
@@ -21,8 +19,6 @@ uploaded_file = st.file_uploader("Upload a CSV", type="csv")
 if not hf_api_key:
     st.warning("Please enter your Hugging Face API key to proceed.")
     st.stop()
-else:
-    os.environ["HUGGINGFACEHUB_API_TOKEN"] = hf_api_key
 
 # Initialize session state for unique user isolation
 if "session_id" not in st.session_state:
@@ -71,16 +67,20 @@ def retrieve_relevant_text(query, index, text_chunks, top_k=3):
     
     return [text_chunks[i] for i in indices[0]]
 
-# Load LLM
-llm = HuggingFaceHub(repo_id="mistralai/Mistral-7B-Instruct-v0.3", model_kwargs={"temperature": 0.5})
-
-# Define prompt
-prompt = PromptTemplate(
-    input_variables=["context", "question"],
-    template="Answer based on the context below:\n\nContext: {context}\n\nQuestion: {question}\n\nAnswer:"
-)
-
-qa_chain = LLMChain(llm=llm, prompt=prompt)
+# Function to run QA with InferenceClient
+def run_qa(context, question, api_key):
+    client = InferenceClient(api_key=api_key, model="mistralai/Mistral-7B-Instruct-v0.3")
+    prompt = f"Answer based on the context below:\n\nContext: {context}\n\nQuestion: {question}\n\nAnswer:"
+    response = client.text_generation(
+        prompt,
+        max_new_tokens=200,
+        temperature=0.5,
+        do_sample=True
+    )
+    # Extract the generated text (strip any metadata if present)
+    if isinstance(response, dict):
+        return response.get('generated_text', response)
+    return response
 
 # Process uploaded CSV
 if uploaded_file and hf_api_key:
@@ -109,8 +109,8 @@ if user_question and st.session_state.faiss_index:
     relevant_chunks = retrieve_relevant_text(user_question, st.session_state.faiss_index, st.session_state.text_chunks)
     context = "\n".join(relevant_chunks)
 
-    # Generate answer
-    answer = qa_chain.run({"context": context, "question": user_question})
+    # Generate answer using InferenceClient
+    answer = run_qa(context, user_question, hf_api_key)
 
     st.write("### Answer:")
     st.write(answer)

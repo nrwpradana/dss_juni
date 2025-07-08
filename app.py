@@ -69,7 +69,7 @@ else:
 class JatevoLLM(LLM):
     def _call(self, prompt: str, stop=None) -> str:
         url = "https://inference.jatevo.id/v1/chat/completions"
-        enhanced_prompt = f"Berikan jawaban dalam bahasa Indonesia: {prompt}"
+        enhanced_prompt = f"Berikan jawaban dalam BAHASA INDONESIA secara singkat, padat dan jelas (Answer in BAHASA INDONESIA): {prompt}"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
@@ -80,7 +80,7 @@ class JatevoLLM(LLM):
             "stop": stop if stop else [],
             "stream": False,
             "top_p": 1,
-            "max_tokens": 1000,
+            #"max_tokens": 1000,
             "temperature": 0.3,
             "presence_penalty": 0,
             "frequency_penalty": 0

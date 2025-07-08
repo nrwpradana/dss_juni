@@ -1,23 +1,26 @@
 import streamlit as st
 import pandas as pd
 import os
-from transformers import pipeline
-from langchain.llms import HuggingFacePipeline
+import requests
+import json
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.chains import RetrievalQA
+from langchain.llms.base import LLM
+from joblib import dump, load
+from pathlib import Path
 
 # Setup page
 st.set_page_config(page_title="CSV Q&A Chatbot", layout="centered")
 st.title("📊 CSV Q&A Chatbot")
-st.text("by Nadhiar Ridho Wahyu Pradana ~ DSS June 2025")
+st.text("DSS June 2025")
 
-# Step 1: API token input (secure)
-api_token = st.text_input("🔐 Masukkan Hugging Face API token:", type="password")
-if not api_token:
-    st.info("Silakan masukkan Hugging Face API Anda untuk melanjutkan.")
+# Step 1: Load Jatevo API key from st.secrets
+if "JATEVO_API_KEY" not in st.secrets:
+    st.error("Jatevo API key tidak ditemukan di st.secrets. Silakan tambahkan di secrets.toml.")
     st.stop()
+api_key = st.secrets["JATEVO_API_KEY"]
 
 # Step 2: Upload CSV
 uploaded_file = st.file_uploader("📁 Unggah file CSV", type=["csv"])
@@ -39,22 +42,54 @@ for _, row in df.iterrows():
 text_splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
 documents = text_splitter.create_documents(docs)
 
-# Step 6: Create embeddings and vectorstore
+# Step 6: Create or load cached embeddings and vectorstore
+cache_dir = Path("faiss_cache")
+cache_file = cache_dir / "vectorstore.joblib"
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-vectorstore = FAISS.from_documents(documents, embeddings)
 
-# Step 7: Setup Hugging Face pipeline with flan-t5-base (FAST)
-flan_pipe = pipeline(
-    "text2text-generation",
-    model="google/flan-t5-base",
-    token=api_token,
-    max_new_tokens=256,
-    temperature=0.3,
-)
+if cache_file.exists():
+    st.info("Memuat vectorstore dari cache...")
+    vectorstore = load(cache_file)
+else:
+    st.info("Membuat embeddings dan vectorstore...")
+    cache_dir.mkdir(exist_ok=True)
+    vectorstore = FAISS.from_documents(documents, embeddings)
+    dump(vectorstore, cache_file)
 
-llm = HuggingFacePipeline(pipeline=flan_pipe)
+# Step 7: Custom LLM for Jatevo API
+class JatevoLLM(LLM):
+    def _call(self, prompt: str, stop=None) -> str:
+        url = "https://inference.jatevo.id/v1/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+        payload = {
+            "model": "deepseek-ai/DeepSeek-R1-0528",
+            "messages": [{"role": "user", "content": prompt}],
+            "stop": stop if stop else [],
+            "stream": False,
+            "top_p": 1,
+            "max_tokens": 1000,
+            "temperature": 0.3,
+            "presence_penalty": 0,
+            "frequency_penalty": 0
+        }
+
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            result = response.json()
+            return result["choices"][0]["message"]["content"]
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    @property
+    def _llm_type(self) -> str:
+        return "jatevo"
 
 # Step 8: Create RetrievalQA chain
+llm = JatevoLLM()
 qa_chain = RetrievalQA.from_chain_type(
     llm=llm,
     chain_type="stuff",

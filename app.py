@@ -14,11 +14,11 @@ from pathlib import Path
 # Setup page
 st.set_page_config(page_title="CSV Q&A Chatbot", layout="centered")
 st.title("📊 CSV Q&A Chatbot")
-st.text("DSS June 2025")
+st.text("by Nadhiar Ridho Wahyu Pradana ~ DSS June 2025")
 
 # Step 1: Load Jatevo API key from st.secrets
 if "JATEVO_API_KEY" not in st.secrets:
-    st.error("Error Bosku")
+    st.error("Jatevo API key tidak ditemukan di st.secrets. Silakan tambahkan di secrets.toml.")
     st.stop()
 api_key = st.secrets["JATEVO_API_KEY"]
 
@@ -55,6 +55,7 @@ documents = text_splitter.create_documents(docs)
 cache_dir = Path("faiss_cache")
 cache_file = cache_dir / "vectorstore.joblib"
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
 if cache_file.exists():
     st.info("Memuat vectorstore dari cache...")
     vectorstore = load(cache_file)
@@ -64,23 +65,23 @@ else:
     vectorstore = FAISS.from_documents(documents, embeddings)
     dump(vectorstore, cache_file)
 
-# Step 7: Custom LLM for Jatevo API with Indonesian output
+# Step 7: Custom LLM for Jatevo API
 class JatevoLLM(LLM):
     def _call(self, prompt: str, stop=None) -> str:
-        # Tambahkan instruksi untuk output dalam bahasa Indonesia
-        enhanced_prompt = f"Berikan jawaban dalam bahasa Indonesia: {prompt}"
         url = "https://inference.jatevo.id/v1/chat/completions"
+        enhanced_prompt = f"Berikan jawaban dalam bahasa Indonesia: {prompt}"
         headers = {
-            "Content-Type": {"application/json",
-            "Authorization": f"Bearer {api_key}"}
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
         }
         payload = {
             "model": "deepseek-ai/DeepSeek-R1-0528",
-            "messages": [{"role": "user", "content": "enhanced_prompt}],
-            "stop": []stop or [],
-            "stream": "False",
+            "messages": [{"role": "user", "content": enhanced_prompt}],
+            "stop": stop if stop else [],
+            "stream": False,
             "top_p": 1,
-            "temperature": "0.3",
+            "max_tokens": 1000,
+            "temperature": 0.3,
             "presence_penalty": 0,
             "frequency_penalty": 0
         }
@@ -90,7 +91,7 @@ class JatevoLLM(LLM):
             response.raise_for_status()
             result = response.json()
             return result["choices"][0]["message"]["content"]
-        }except Exception as e:
+        except Exception as e:
             return f"Error: {str(e)}"
 
     @property
@@ -102,7 +103,7 @@ llm = JatevoLLM()
 qa_chain = RetrievalQA.from_chain_type(
     llm=llm,
     chain_type="stuff",
-    "messages"=vectorstore.as_retriever()
+    retriever=vectorstore.as_retriever()
 )
 
 # Step 9: Q&A interface

@@ -14,11 +14,10 @@ from pathlib import Path
 # Setup page
 st.set_page_config(page_title="CSV Q&A Chatbot", layout="centered")
 st.title("📊 CSV Q&A Chatbot")
-st.text("by Nadhiar Ridho Wahyu Pradana ~ DSS June 2025")
 
 # Step 1: Load Jatevo API key from st.secrets
 if "JATEVO_API_KEY" not in st.secrets:
-    st.error("Jatevo API key tidak ditemukan di st.secrets. Silakan tambahkan di secrets.toml.")
+    st.error("Error Bosku")
     st.stop()
 api_key = st.secrets["JATEVO_API_KEY"]
 

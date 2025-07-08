@@ -18,7 +18,7 @@ st.text("DSS June 2025")
 
 # Step 1: Load Jatevo API key from st.secrets
 if "JATEVO_API_KEY" not in st.secrets:
-    st.error("Jatevo API key tidak ditemukan di st.secrets. Silakan tambahkan di secrets.toml.")
+    st.error("ERROR BOS")
     st.stop()
 api_key = st.secrets["JATEVO_API_KEY"]
 
@@ -27,15 +27,24 @@ uploaded_file = st.file_uploader("📁 Unggah file CSV", type=["csv"])
 if not uploaded_file:
     st.stop()
 
-# Step 3: Read and preview CSV
-df = pd.read_csv(uploaded_file)
+# Step 3: Read and preview CSV with encoding handling
+try:
+    df = pd.read_csv(uploaded_file, encoding='utf-8')
+except UnicodeDecodeError:
+    st.warning("Gagal membaca CSV dengan encoding UTF-8. Mencoba encoding alternatif...")
+    try:
+        df = pd.read_csv(uploaded_file, encoding='latin1')
+    except Exception as e:
+        st.error(f"Gagal membaca CSV: {str(e)}. Coba periksa format file atau encoding.")
+        st.stop()
+
 st.subheader("📄 CSV Preview")
 st.dataframe(df.head())
 
 # Step 4: Convert rows to documents
 docs = []
 for _, row in df.iterrows():
-    text = "\n".join([f"{col}: {row[col]}" for col in df.columns])
+    text = "\n".join([f"{col}: {str(row[col]).encode('utf-8', errors='replace').decode('utf-8')}" for col in df.columns])
     docs.append(text)
 
 # Step 5: Split into chunks
